@@ -1,7 +1,334 @@
 <!DOCTYPE html>
-<html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistema de Monitoreo de Vibraciones</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/moment@2.29.4/moment.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f7fa;
+            color: #333;
+        }
+        .dashboard {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 20px;
+        }
+        h1 {
+            color: #2c3e50;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+        }
+        .filters {
+            background: #ecf0f1;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+        .filter-group {
+            margin-bottom: 10px;
+        }
+        label {
+            display: inline-block;
+            width: 120px;
+            font-weight: bold;
+        }
+        input, select {
+            padding: 8px;
+            border: 1px solid #bdc3c7;
+            border-radius: 4px;
+            width: 200px;
+        }
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background 0.3s;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        .chart-container {
+            width: 100%;
+            height: 400px;
+            margin: 20px 0;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+        }
+        .alerts {
+            background-color: #fff4e6;
+            border-left: 4px solid #e67e22;
+            padding: 10px;
+            margin: 15px 0;
+            border-radius: 4px;
+        }
+        .alert {
+            color: #d35400;
+            margin: 5px 0;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #3498db;
+            color: white;
+        }
+        tr:nth-child(even) {
+            background-color: #f2f2f2;
+        }
+        .export-btn {
+            background-color: #27ae60;
+            margin-top: 10px;
+        }
+        .export-btn:hover {
+            background-color: #219653;
+        }
+    </style>
+</head>
 <body>
-<h1>Hello World</h1>
-<p>I'm hosted with GitHub Pages.</p>
+    <div class="dashboard">
+        <h1>Monitor de Vibraciones</h1>
+        
+        <div class="filters">
+            <div class="filter-group">
+                <label for="date-range">Rango de Fechas:</label>
+                <input type="datetime-local" id="start-date">
+                <span> a </span>
+                <input type="datetime-local" id="end-date">
+            </div>
+            
+            <div class="filter-group">
+                <label for="min-magnitude">Magnitud Mínima (g):</label>
+                <input type="number" id="min-magnitude" min="0" step="0.1" value="0">
+                
+                <label for="max-magnitude" style="margin-left: 20px;">Magnitud Máxima (g):</label>
+                <input type="number" id="max-magnitude" min="0.1" step="0.1" value="10">
+            </div>
+            
+            <button id="search-btn">Buscar Datos</button>
+        </div>
+        
+        <div id="alerts-container" class="alerts" style="display: none;">
+            <h3>🔔 Alertas Recientes</h3>
+            <div id="alerts-list"></div>
+        </div>
+        
+        <div id="chart-container" class="chart-container"></div>
+        
+        <h2>Datos Registrados</h2>
+        <table id="data-table">
+            <thead>
+                <tr>
+                    <th>Fecha/Hora</th>
+                    <th>Magnitud (g)</th>
+                </tr>
+            </thead>
+            <tbody id="table-body">
+                <!-- Los datos se cargan aquí -->
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        // Variables globales
+        let chart;
+        const API_URL = "http://localhost:8000/api/readings"; // Hay que cambia esta URL
+        
+        // Inicializar gráfico
+        function initChart() {
+            chart = echarts.init(document.getElementById('chart-container'));
+            
+            const option = {
+                tooltip: {
+                    trigger: 'axis',
+                    formatter: params => {
+                        const date = new Date(params[0].value[0]);
+                        return `
+                            <strong>${date.toLocaleString()}</strong><br/>
+                            Sensor: ${params[0].value[2]}<br/>
+                            Magnitud: ${params[0].value[1].toFixed(2)}g
+                        `;
+                    }
+                },
+                xAxis: {
+                    type: 'time'
+                },
+                yAxis: {
+                    type: 'value',
+                    name: 'Magnitud (g)'
+                },
+                series: [{
+                    type: 'line',
+                    showSymbol: false,
+                    smooth: true
+                }],
+                dataZoom: [{
+                    type: 'inside',
+                    start: 0,
+                    end: 100
+                }]
+            };
+            
+            chart.setOption(option);
+        }
+        
+        // Datos del API
+        async function loadData() {
+            const startDate = document.getElementById('start-date').value;
+            const endDate = document.getElementById('end-date').value;
+            const sensorId = document.getElementById('sensor-id').value;
+            const minMagnitude = document.getElementById('min-magnitude').value;
+            const maxMagnitude = document.getElementById('max-magnitude').value;
+            
+            // Construcción de URL
+            let url = `${API_URL}?min_magnitude=${minMagnitude}&max_magnitude=${maxMagnitude}`;
+            if (startDate) url += `&start_date=${startDate}`;
+            if (endDate) url += `&end_date=${endDate}`;
+            if (sensorId) url += `&sensor_id=${sensorId}`;
+            
+            try {
+                const response = await fetch(url);
+                const data = await response.json();
+                
+                // Actualizar tabla
+                updateTable(data);
+                
+                // Actualizar gráfico
+                updateChart(data);
+                
+                // Mostrar alertas
+                showAlerts(data);
+                
+            } catch (error) {
+                console.error("Error al cargar datos:", error);
+                alert("Error al cargar datos. Verifica la consola para más detalles.");
+            }
+        }
+        
+        // Actualizar tabla con datos
+        function updateTable(data) {
+            const tableBody = document.getElementById('table-body');
+            tableBody.innerHTML = '';
+            
+            data.forEach(item => {
+                const row = document.createElement('tr');
+                
+                const dateCell = document.createElement('td');
+                dateCell.textContent = new Date(item.timestamp).toLocaleString();
+                
+                const sensorCell = document.createElement('td');
+                sensorCell.textContent = item.sensor_id;
+                
+                const magCell = document.createElement('td');
+                magCell.textContent = item.magnitude.toFixed(4);
+                
+                row.appendChild(dateCell);
+                row.appendChild(sensorCell);
+                row.appendChild(magCell);
+                
+                tableBody.appendChild(row);
+            });
+        }
+        
+        // Actualizar gráfico
+        function updateChart(data) {
+            const chartData = data.map(item => [
+                item.timestamp,
+                item.magnitude,
+                item.sensor_id
+            ]);
+            
+            chart.setOption({
+                dataset: {
+                    source: chartData
+                },
+                series: {
+                    encode: {
+                        x: 0,
+                        y: 1
+                    }
+                }
+            });
+        }
+        
+        // Mostrar alertas (magnitud > 3g)
+        function showAlerts(data) {
+            const alertsContainer = document.getElementById('alerts-container');
+            const alertsList = document.getElementById('alerts-list');
+            alertsList.innerHTML = '';
+            
+            const alertData = data.filter(item => item.magnitude > 3);
+            
+            if (alertData.length > 0) {
+                alertsContainer.style.display = 'block';
+                
+                alertData.forEach(alert => {
+                    const alertDiv = document.createElement('div');
+                    alertDiv.className = 'alert';
+                    alertDiv.innerHTML = `
+                        <strong>${new Date(alert.timestamp).toLocaleString()}</strong> - 
+                        Sensor ${alert.sensor_id}: <strong>${alert.magnitude.toFixed(2)}g</strong>
+                    `;
+                    alertsList.appendChild(alertDiv);
+                });
+            } else {
+                alertsContainer.style.display = 'none';
+            }
+        }
+        
+        // Exportar a CSV
+        function exportToCSV() {
+            const startDate = document.getElementById('start-date').value;
+            const endDate = document.getElementById('end-date').value;
+            const sensorId = document.getElementById('sensor-id').value;
+            const minMagnitude = document.getElementById('min-magnitude').value;
+            const maxMagnitude = document.getElementById('max-magnitude').value;
+            
+            let url = `${API_URL}/export/csv?min_magnitude=${minMagnitude}&max_magnitude=${maxMagnitude}`;
+            if (startDate) url += `&start_date=${startDate}`;
+            if (endDate) url += `&end_date=${endDate}`;
+            if (sensorId) url += `&sensor_id=${sensorId}`;
+            
+            window.open(url, '_blank');
+        }
+        
+        // Event Listeners
+        document.getElementById('search-btn').addEventListener('click', loadData);
+        document.getElementById('export-btn').addEventListener('click', exportToCSV);
+        
+        // Inicialización
+        document.addEventListener('DOMContentLoaded', () => {
+            initChart();
+            
+            // Establecer fecha por defecto (últimas 24 horas)
+            const now = new Date();
+            const yesterday = new Date(now.getTime() - (24 * 60 * 60 * 1000));
+            
+            document.getElementById('start-date').value = yesterday.toISOString().slice(0, 16);
+            document.getElementById('end-date').value = now.toISOString().slice(0, 16);
+            
+            // Cargar datos iniciales
+            loadData();
+        });
+    </script>
 </body>
 </html>
