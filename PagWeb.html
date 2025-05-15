@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sistema de Monitoreo de Vibraciones</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/moment@2.29.4/moment.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f7fa;
+            color: #333;
+        }
+        .dashboard {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 20px;
+        }
+        h1 {
+            color: #2c3e50;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+        }
+        .filters {
+            background: #ecf0f1;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+        .filter-group {
+            margin-bottom: 10px;
+        }
+        label {
+            display: inline-block;
+            width: 120px;
+            font-weight: bold;
+        }
+        input, select {
+            padding: 8px;
+            border: 1px solid #bdc3c7;
+            border-radius: 4px;
+            width: 200px;
+        }
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background 0.3s;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        .chart-container {
+            width: 100%;
+            height: 400px;
+            margin: 20px 0;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+        }
+        .alerts {
+            background-color: #fff4e6;
+            border-left: 4px solid #e67e22;
+            padding: 10px;
+            margin: 15px 0;
+            border-radius: 4px;
+        }
+        .alert {
+            color: #d35400;
+            margin: 5px 0;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #3498db;
+            color: white;
+        }
+        tr:nth-child(even) {
+            background-color: #f2f2f2;
+        }
+        .export-btn {
+            background-color: #27ae60;
+            margin-top: 10px;
+        }
+        .export-btn:hover {
+            background-color: #219653;
+        }
+    </style>
+</head>
+<body>
+    <div class="dashboard">
+        <h1>Monitor de Vibraciones</h1>
+
+        <div class="filters">
+            <div class="filter-group">
+                <label for="date-range">Rango de Fechas:</label>
+                <input type="datetime-local" id="start-date" />
+                <span> a </span>
+                <input type="datetime-local" id="end-date" />
+            </div>
+
+            <div class="filter-group">
+                <label for="min-magnitud">Magnitud Mínima (g):</label>
+                <input type="number" id="min-magnitud" min="0" step="0.1" value="0" />
+
+                <label for="max-magnitud" style="margin-left: 20px;">Magnitud Máxima (g):</label>
+                <input type="number" id="max-magnitud" min="0.1" step="0.1" value="10" />
+            </div>
+
+            <button id="search-btn">Buscar Datos</button>
+            <button id="btn-recargar" style="margin-left: 10px;">Recargar Datos</button>
+        </div>
+
+        <div id="alerts-container" class="alerts" style="display: none;">
+            <h3>🔔 Alertas Recientes</h3>
+            <div id="alerts-list"></div>
+        </div>
+
+        <div id="chart-container" class="chart-container"></div>
+
+        <h2>Datos Registrados</h2>
+        <table id="data-table">
+            <thead>
+                <tr>
+                    <th>Magnitud en g</th>
+                    <th>Alerta</th>
+                    <th>Tiempo toma de la Muestra</th>
+                </tr>
+            </thead>
+            <tbody id="table-body"></tbody>
+        </table>
+    </div>
+
+    <script>
+        let chart;
+        const API_URL = "http://192.168.58.106:8000/api/readings";
+
+        function initChart() {
+            chart = echarts.init(document.getElementById('chart-container'));
+
+            chart.setOption({
+                tooltip: {
+                    trigger: 'axis',
+                    formatter: params => {
+                        const date = new Date(params[0].value[0]);
+                        return `<strong>${date.toLocaleString()}</strong><br/>Magnitud: ${params[0].value[1].toFixed(2)}g`;
+                    }
+                },
+                xAxis: { type: 'time' },
+                yAxis: { type: 'value', name: 'Magnitud (g)' },
+                series: [
+                    {
+                        type: 'line',
+                        showSymbol: false,
+                        smooth: true,
+                        name: 'Magnitud'
+                    },
+                    /*{
+                        type: 'scatter',
+                        symbolSize: 8,
+                        itemStyle: { color: 'red' },
+                        name: 'Pico'
+                    }*/
+                ],
+                dataZoom: [{ type: 'inside', start: 0, end: 100 }]
+            });
+        }
+
+        async function loadData() {
+            //const startDate = document.getElementById('start-date').value = "2000-01-01T00:00";
+            //const endDate = document.getElementById('end-date').value = "2100-01-01T00:00";
+
+            const startDate = document.getElementById('start-date').value = "2025-05-09T00:00" ;
+            const endDate = document.getElementById('end-date').value = "2025-05-12T00:00";
+            
+            //const startDate = document.getElementById('start-date').value;
+            //const endDate = document.getElementById('end-date').value;
+            const minMagnitud = document.getElementById('min-magnitud').value;
+            const maxMagnitud = document.getElementById('max-magnitud').value;
+
+            let url = `${API_URL}?min_magnitud=${minMagnitud}&max_magnitud=${maxMagnitud}`;
+            if (startDate) url += `&start_date=${encodeURIComponent(startDate)}`;
+            if (endDate) url += `&end_date=${encodeURIComponent(endDate)}`;
+
+            try {
+                const response = await fetch(url);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+
+                if (!Array.isArray(data) || data.length === 0) {
+                    alert("No se encontraron datos para los filtros seleccionados.");
+                    updateTable([]);
+                    updateChart([]);
+                    showAlerts([]);
+                    return;
+                }
+
+                updateTable(data);
+                updateChart(data);
+                showAlerts(data);
+            } catch (error) {
+                console.error("Error al cargar datos:", error);
+                alert("Error al cargar datos. Verifica la consola para más detalles.");
+            }
+        }
+
+        function updateTable(data) {
+            const tableBody = document.getElementById('table-body');
+            tableBody.innerHTML = '';
+
+            data.forEach(item => {
+                const row = document.createElement('tr');
+
+                const magCell = document.createElement('td');
+                magCell.textContent = item.magnitud.toFixed(4);
+
+                const alertCell = document.createElement('td');
+                alertCell.textContent = item.alerta ? 'Sí' : 'No';
+
+                const timeCell = document.createElement('td');
+                timeCell.textContent = new Date(item.tiempo).toLocaleString();
+
+                row.appendChild(magCell);
+                row.appendChild(alertCell);
+                row.appendChild(timeCell);
+
+                tableBody.appendChild(row);
+            });
+        }
+
+        function updateChart(data) {
+            const normalData = [];
+            const alertPoints = [];
+
+            data.forEach(item => {
+                // ECharts funciona bien con strings ISO para tiempo
+                const point = [item.tiempo, item.magnitud];
+                if (item.alerta) {
+                    alertPoints.push(point);
+                } else {
+                    normalData.push(point);
+                }
+            });
+
+            chart.setOption({
+                series: [
+                    { data: normalData },
+                    { data: alertPoints }
+                ]
+            });
+        }
+
+        function showAlerts(data) {
+            const alertsContainer = document.getElementById('alerts-container');
+            const alertsList = document.getElementById('alerts-list');
+            alertsList.innerHTML = '';
+
+            // Mostrar alertas recientes: filtrar por alerta activa (item.alerta === true)
+            const alertData = data.filter(item => item.alerta);
+
+            if (alertData.length > 0) {
+                alertsContainer.style.display = 'block';
+                alertData.forEach(alert => {
+                    const alertDiv = document.createElement('div');
+                    alertDiv.className = 'alert';
+                    alertDiv.innerHTML = `<strong>${new Date(alert.tiempo).toLocaleString()}</strong> - Magnitud: <strong>${alert.magnitud.toFixed(2)}g</strong>`;
+                    alertsList.appendChild(alertDiv);
+                });
+            } else {
+                alertsContainer.style.display = 'none';
+            }
+        }
+
+        document.getElementById('search-btn').addEventListener('click', loadData);
+        document.getElementById('btn-recargar').addEventListener('click', loadData);
+
+        document.addEventListener('DOMContentLoaded', () => {
+            initChart();
+            const now = new Date();
+            const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+            document.getElementById('start-date').value = yesterday.toISOString().slice(0, 16);
+            document.getElementById('end-date').value = now.toISOString().slice(0, 16);
+            loadData();
+        });
+    </script>
+</body>
+</html>
